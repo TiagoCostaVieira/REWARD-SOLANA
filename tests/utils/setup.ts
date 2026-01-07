@@ -1,22 +1,10 @@
 // tests/utils/setup.ts
 import * as anchor from "@coral-xyz/anchor";
-import { Keypair } from "@solana/web3.js";
+import { Program, BN } from "@coral-xyz/anchor";
+import { VaultProject } from "../../target/types/vault_project";
 
-export async function initializeWithRealTokens() {
-  const provider = anchor.AnchorProvider.env();
-  anchor.setProvider(provider);
+export const provider = anchor.AnchorProvider.env();
+anchor.setProvider(provider);
 
-  const program = anchor.workspace.YourProgramName as anchor.Program;
-
-  await program.methods
-    .initialize()
-    .accounts({
-      payer: provider.wallet.publicKey,
-      systemProgram: anchor.web3.SystemProgram.programId,
-    })
-    .rpc();
-
-  const user = Keypair.generate();
-    
-  console.log("✅ Programa inicializado com tokens reais");
-}
+export const program = anchor.workspace.VaultProject as Program<VaultProject>;
+export { BN };

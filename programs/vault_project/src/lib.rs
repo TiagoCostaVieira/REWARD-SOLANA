@@ -27,25 +27,25 @@ pub mod vault_project {
         let pool = &mut ctx.accounts.user_pool;
         let clock = Clock::get()?;
         
-        // Inicializa o pool se for novo
+        // Initialize the pool if it is new.
         if pool.authority == Pubkey::default() {
             pool.authority = ctx.accounts.authority.key();
             pool.amount = 0;
             pool.total_staked = 0;
             pool.reward_per_token_stored = 0;
-            pool.reward_rate = 100; // Defina um valor apropriado
+            pool.reward_rate = DEFAULT_REWARD_RATE; 
             pool.last_update_slot = clock.slot;
             pool.deposit_slot = clock.slot;
             pool.reward_debt = 0;
         }
         
-        // Calcula e distribui recompensas pendentes antes de novo stake
+        // Calculates and distributes pending rewards before new staking.
         if pool.amount > 0 {
             let slots_passed = clock.slot.checked_sub(pool.last_update_slot).unwrap_or(0);
             let reward = slots_passed.checked_mul(pool.reward_rate).unwrap_or(0);
             
             if reward > 0 {
-                // Minta recompensas para o usuário
+                // Mint rewards for the user
                 let cpi_accounts = MintTo {
                     mint: ctx.accounts.staking_token.to_account_info(),
                     to: ctx.accounts.user_staking_wallet.to_account_info(),
@@ -56,21 +56,35 @@ pub mod vault_project {
                 let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
                 token::mint_to(cpi_ctx, reward)?;
                 
-                // Atualiza o estado global de recompensas
+                // Updates the global rewards status.
                 let global_state = &mut ctx.accounts.global_state;
                 global_state.total_reward += reward;
             }
         }
 
         pub fn unstake(ctx: Context<Unstake>, amountq:u64) -> Result<()>{
-            let user = ctx.account.user_staking_wallet.user;
-            user.amount -= amount;
-            let accumulated_slot = slots_passed * reward_rate;
-            let pending_reward = user.amount * (reward_per_token_stored - user.reward_debt);
+            let user = &mut ctx.accounts.user_staking_wallet;
+            let clock = Clock::get()?;
+
             require!(amount <= user.amount, ErrorCode::InsufficientStake);
+
+            let slots_passed = clock.slot - user.last_update_slot;
+            let accumulated_reward = slots_passed * reward_rate;
+            
+            user.reward_per_token_stored += accumulated_reward;
+
+            let pending_toking = user.amount * (user.reward_per_token_stored - reward_debt);
+            
+            user.amount -= amount;
+
+            user.reward_debt = user.amount * user.reward_per_token_stored;
+
+            user.last_update_slot = clock.slot;
+
+            Ok(());
         }
         
-        // Transfere tokens do usuário para o pool
+        // Transferring tokens from the user to the pool.
         let transfer_cpi_accounts = Transfer {
             from: ctx.accounts.user_token_account.to_account_info(),
             to: ctx.accounts.pool_token_account.to_account_info(),
@@ -81,7 +95,7 @@ pub mod vault_project {
         let transfer_cpi_ctx = CpiContext::new(transfer_cpi_program, transfer_cpi_accounts);
         token::transfer(transfer_cpi_ctx, amount)?;
         
-        // Atualiza estado do pool
+        // update pool state
         pool.amount += amount;
         pool.total_staked += amount;
         pool.last_update_slot = clock.slot;
@@ -95,8 +109,8 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 8 + 1,
-        seeds = [b"global_state"],
+        space = GLOBAL_STATE_SIZE,
+        seeds = [GLOBAL_STATE_SEED],
         bump       
     )]
     pub globalstate: Account<'info, GlobalState>,
@@ -109,7 +123,7 @@ pub struct Initialize<'info> {
 pub struct UpdateTotalReward<'info> {
     #[account(
         mut,
-        seeds = [b"global_state"],
+        seeds = [GLOBAL_STATE_SEED],
         bump = globalstate.bump  
     )]
     pub globalstate: Account<'info, GlobalState>,
@@ -128,15 +142,15 @@ pub struct Stake<'info> {
     #[account(
         init_if_needed,
         payer = authority,
-        space = 8 + 32 + 8 + 8 + 8 + 8 + 8 + 8 + 8,
-        seeds = [b"user-pool", authority.key().as_ref()],
+        space = USER_POOL_SIZE,
+        seeds = [GLOBAL_STATE_SEED, authority.key().as_ref()],
         bump
     )]
     pub user_pool: Account<'info, UserPool>,
     
     #[account(
         mut,
-        seeds = [b"global_state"],
+        seeds = [GLOBAL_STATE_SEED],
         bump
     )]
     pub global_state: Account<'info, GlobalState>,
@@ -171,7 +185,7 @@ pub struct Stake<'info> {
     pub system_program: Program<'info, System>,
 }
 
-// Estruturas de dados
+// Data structure
 #[account]
 pub struct GlobalState {
     pub total_reward: u64,

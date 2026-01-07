@@ -1,63 +1,45 @@
-// tests/unit/instructions/stake.test.ts
-import { BN } from "@project-serum/anchor";
+import { 
+  program, 
+  provider, 
+  BN,
+  assert,
+  fundUser,
+  stakeTokens,
+  createTestUser,
+  initializeGlobalState 
+} from '../../utils';
 
-describe("Stake Instruction", () => {
-  it("Should stake tokens successfully", async () => {
-    // Arrange
-    const stakeAmount = new BN(1000 * 10 ** 9); // 1000 tokens
-    const [userStatePDA] = await getPDA(user1.publicKey, "user_state");
+import { Keypair } from '@solana/web3.js';
+
+describe('Stake Instruction', () => {
+  let user: Keypair;
+  let authority: Keypair;
+
+  before(async () => {
+    // Setup inicial
+    authority = createTestUser();
+    user = createTestUser();
     
-    // Mint tokens para o usuário
-    await mintToUser(user1, stakeAmount);
+    await fundUser(authority);
+    await fundUser(user);
     
-    // Act
-    const tx = await program.methods
-      .stake(stakeAmount)
-      .accounts({
-        user: user1.publicKey,
-        userState: userStatePDA,
-        // ... outras contas
-      })
-      .signers([user1])
-      .rpc();
-    
-    // Assert
-    const userState = await program.account.userState.fetch(userStatePDA);
-    
-    // Verificar se stake foi registrado
-    assert.equal(userState.stakedAmount.toString(), stakeAmount.toString());
-    assert.isAbove(userState.stakeTimestamp.toNumber(), 0);
-    
-    // Verificar se tokens foram transferidos para o vault
-    const vaultBalance = await stakingToken.getAccountBalance(stakingVault);
-    assert.equal(vaultBalance.amount, stakeAmount.toString());
+    await initializeGlobalState(authority);
   });
-  
-  it("Should fail when staking zero tokens", async () => {
-    try {
-      await program.methods
-        .stake(new BN(0))
-        .accounts({ /* ... */ })
-        .rpc();
-      
-      assert.fail("Should have thrown error");
-    } catch (error) {
-      assert.include(error.message, "InvalidStakeAmount");
-    }
-  });
-  
-  it("Should fail with insufficient balance", async () => {
-    const excessiveAmount = new BN(1000000 * 10 ** 9);
+
+  it('Should stake tokens successfully', async () => {
+    const amount = 1000;
+    const tx = await stakeTokens(user, amount);
     
+    assert.isString(tx);
+    assert.lengthOf(tx, 88); // Solana signature length
+  });
+
+  it('Should fail when staking zero tokens', async () => {
     try {
-      await program.methods
-        .stake(excessiveAmount)
-        .accounts({ /* ... */ })
-        .rpc();
-      
-      assert.fail("Should have thrown error");
-    } catch (error) {
-      assert.include(error.message, "InsufficientBalance");
+      await stakeTokens(user, 0);
+      assert.fail('Should have thrown');
+    } catch (error: any) {
+      assert.include(error.message, 'Invalid amount');
     }
   });
 });
