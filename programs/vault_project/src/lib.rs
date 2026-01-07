@@ -1,7 +1,8 @@
+mod error;
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, MintTo, Mint};
 use anchor_spl::associated_token::AssociatedToken;
-
+use error::VaultError; 
 declare_id!("G21goJwCydZbzy4UpY1sxFNvwR4WNZMTcEyYuY3PAdYq");
 
 #[program]
@@ -62,26 +63,97 @@ pub mod vault_project {
             }
         }
 
-        pub fn unstake(ctx: Context<Unstake>, amountq:u64) -> Result<()>{
-            let user = &mut ctx.accounts.user_staking_wallet;
+        pub fn unstake(ctx: Context<Unstake>, amount:u64) -> Result<()>{
+            require!(amount > 0, VaultError::ZeroStakeAmount);
+            require!(!ctx.accounts.global_state.paused, VaultError::PoolPaused);
+            
+            let pool = &mut ctx.accounts.user_pool;
             let clock = Clock::get()?;
 
-            require!(amount <= user.amount, ErrorCode::InsufficientStake);
+            require!(amount <= pool.amount, ErrorCode::InsufficientStake);
 
-            let slots_passed = clock.slot - user.last_update_slot;
-            let accumulated_reward = slots_passed * reward_rate;
+            let slots_passed = clock.slot
+                               .checked_sub(pool.last_update_slot)
+                               .ok_or(VaultError::InvalidTimestamp);
             
-            user.reward_per_token_stored += accumulated_reward;
-
-            let pending_toking = user.amount * (user.reward_per_token_stored - reward_debt);
             
-            user.amount -= amount;
+            if slots_passed > 0 && pool.amount > 0 {
+                let accumulated_reward = slots_passed
+                                        .checked_sub(pool.reward_rate)
+                                        .ok_or(VaultError::RewardOverflow)?;
 
-            user.reward_debt = user.amount * user.reward_per_token_stored;
+                
+                pool.reward_per_token_stored = pool.reward_per_token_stored
+                                                .cheked_add(accumulated_reward)
+                                                .ok_or(VaultError::ArithmeticOverflow)
 
-            user.last_update_slot = clock.slot;
+                let pending_tokens = pool.amount
+                        .checked_mul(
+                        pool.reward_per_token_stored
+                        .checked_sub(pool.reward_debt)
+                        .ok_or(VaultError::ArithmeticOverflow)?
+                    )
+                    .ok_or(VaultError::ArithmeticOverflow)?;
 
-            Ok(());
+                    if pending_tokens > 0 {
+                        
+                        let cpi_accounts = MintTo{
+                            mint: ctx.accounts.staking_token.to_account_info(),
+                            to: ctx:accounts.user_staking_wallet.to_account_info(),
+                            authority: ctx.accounts.admin.to_account_info()
+                        };
+                        let sginer_seed = $[
+                            GLOBAL_STATE_SEED, 
+                            &[ctx.accounts.global_state.bump]
+                        ];
+                        let sginer_seed = &[&seeds[...]];
+
+                        let cpi_accounts = ctx.accounts.token_program.to_account_info;
+                        let cpi_ctx = CpiContext::new_with_signer(
+                            cpi_program,
+                            cpi_accounts,
+                            sginer_seed
+                        );
+                        token::mint_to(cpi_ctx, pending_tokens)?;
+
+                        msg!("Pending rewards distributed: {}", pending_tokens);
+                    }
+            }
+
+            pool.reward_debt = pool.reward_per_token_stored
+                                .checked_mul(pool.amount.checked_sub(amount).unwrap_or(0))
+                                .ok_or(VaultError::ArithmeticOverflow)?;
+
+            pool.amount = pool.amount
+                          .checked_sub(amount)
+                          .ok_or(VaultError::ArithmeticOverflow)?;
+
+            pool.last_update_slot = clock.slot;
+
+            let transfer_cpi_accounts = Transfer{
+                from: ctx.accounts.pool_token_account.to_account_info(),
+                to: ctx.accounts.user_token_account.to_account_info(),
+                authority: ctx.accounts.user_pool.to_account_info(),
+            };
+
+            let seed = &[
+                USER_POOL_SEED,
+                ctx.accounts.authority.key().as_ref(),
+                &[pool.bump]
+            ];
+            let signer_seed = &[&seeds[...]];
+
+            let transfer_cpi_program = ctx.accounts.token_program.to_account_info();
+            let transfer_cpi_ctx = CpiContext::new_with_signer(
+                transfer_cpi_program,
+                transfer_cpi_accounts,
+                signer_seeds
+            );
+
+            token::transfer(transfer_cpi_ctx, amount)?;
+            msg!("Unstaked {} tokens successfully", amount);
+            
+            Ok(())
         }
         
         // Transferring tokens from the user to the pool.
