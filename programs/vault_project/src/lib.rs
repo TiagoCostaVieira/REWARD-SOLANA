@@ -74,8 +74,7 @@ pub mod vault_project {
 
             let slots_passed = clock.slot
                                .checked_sub(pool.last_update_slot)
-                               .ok_or(VaultError::InvalidTimestamp);
-            
+                               .ok_or(VaultError::InvalidTimestamp); 
             
             if slots_passed > 0 && pool.amount > 0 {
                 let accumulated_reward = slots_passed
@@ -152,8 +151,15 @@ pub mod vault_project {
 
             token::transfer(transfer_cpi_ctx, amount)?;
             msg!("Unstaked {} tokens successfully", amount);
-            
+
             Ok(())
+        }
+
+        pub fn claimreward(ctx: Context<Claimreward> amount: u64) -> Result<()>{
+            let user = &mut ctx.accounts.user_state;
+            let pool = &mut ctx.accounts.pool;
+
+            let peding =( user.amount *pool.accumulated_reward_per_share) - user.reward_debt;
         }
         
         // Transferring tokens from the user to the pool.
@@ -270,6 +276,7 @@ pub struct UserPool {
     pub amount: u64,
     pub total_staked: u64,
     pub reward_per_token_stored: u64,
+    pub accumulated_reward_per_share: u128,
     pub reward_rate: u64,
     pub last_update_slot: u64,
     pub deposit_slot: u64,
